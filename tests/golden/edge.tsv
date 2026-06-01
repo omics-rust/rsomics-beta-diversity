@@ -1,0 +1,9 @@
+feature	dense	sparse	empty	presence
+OTU1	4	0	0	1
+OTU2	0	10	0	1
+OTU3	3	0	0	1
+OTU4	1	0	0	0
+OTU5	2	5	0	1
+OTU6	0	1	0	0
+OTU7	5	0	0	1
+OTU8	0	0	0	1
