@@ -87,3 +87,31 @@ fn matches_skbio_counts_table() {
 fn matches_skbio_edge_table() {
     differential("edge.tsv");
 }
+
+/// Frozen-oracle goldens for float layouts skbio renders in scientific notation
+/// (tiny distances < 1e-4, huge distances >= 1e16). The expected bytes were
+/// generated from scikit-bio's own `DistanceMatrix.write`, so this runs offline
+/// and pins the Python `repr(float)` formatting without needing skbio present.
+fn matches_frozen_golden(table: &str, metric: &str, expected_file: &str) {
+    let expected = std::fs::read_to_string(golden(expected_file)).unwrap();
+    assert_eq!(
+        ours_output(table, metric),
+        expected,
+        "rsomics-beta-diversity output differs from frozen skbio golden ({expected_file})"
+    );
+}
+
+#[test]
+fn tiny_braycurtis_scientific_notation() {
+    matches_frozen_golden("tiny.tsv", "braycurtis", "tiny.braycurtis.expected");
+}
+
+#[test]
+fn huge_cityblock_scientific_notation() {
+    matches_frozen_golden("huge.tsv", "cityblock", "huge.cityblock.expected");
+}
+
+#[test]
+fn huge_euclidean_scientific_notation() {
+    matches_frozen_golden("huge.tsv", "euclidean", "huge.euclidean.expected");
+}

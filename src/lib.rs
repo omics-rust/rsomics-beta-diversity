@@ -156,10 +156,14 @@ impl DistanceMatrix {
     }
 }
 
-/// Append `x` formatted as Python's `repr(float)` would: shortest round-trip
-/// decimal, but integer-valued finite floats keep a trailing `.0`, and NaN
-/// renders lowercase `nan` (skbio emits `nan` for Bray-Curtis of two empty
-/// samples).
+/// Append `x` formatted as CPython's `repr(float)` would. Rust's `{:e}` yields
+/// the same shortest round-trip significant digits and decimal exponent that
+/// David Gay's dtoa gives CPython; from those we apply CPython's own layout
+/// rule (`Python/pystrtod.c` `format_float_short`, format code `'r'`): fixed
+/// notation unless the scientific exponent is `< -4` or `>= 16`, in which case
+/// scientific with a sign and ≥2 exponent digits. Integer-valued fixed output
+/// keeps a trailing `.0`; NaN renders lowercase `nan` (skbio emits `nan` for
+/// Bray-Curtis of two empty samples).
 fn push_pyrepr(buf: &mut String, x: f64) {
     use std::fmt::Write;
     if x.is_nan() {
@@ -170,10 +174,51 @@ fn push_pyrepr(buf: &mut String, x: f64) {
         buf.push_str(if x < 0.0 { "-inf" } else { "inf" });
         return;
     }
-    let start = buf.len();
-    let _ = write!(buf, "{x}");
-    if !buf[start..].contains(['.', 'e', 'E']) {
-        buf.push_str(".0");
+
+    let mut sci = String::new();
+    let _ = write!(sci, "{x:e}");
+    let neg = sci.starts_with('-');
+    let (mantissa, exp) = sci[usize::from(neg)..].split_once('e').unwrap();
+    let e: i32 = exp.parse().unwrap();
+    let digits: String = mantissa.chars().filter(|&c| c != '.').collect();
+    let ndigits = digits.len() as i32;
+
+    if neg {
+        buf.push('-');
+    }
+    if !(-4..16).contains(&e) {
+        buf.push_str(&digits[..1]);
+        if ndigits > 1 {
+            buf.push('.');
+            buf.push_str(&digits[1..]);
+        }
+        buf.push('e');
+        buf.push(if e < 0 { '-' } else { '+' });
+        let mag = e.unsigned_abs();
+        if mag < 10 {
+            buf.push('0');
+        }
+        let _ = write!(buf, "{mag}");
+    } else {
+        let decpt = e + 1;
+        if decpt <= 0 {
+            buf.push_str("0.");
+            for _ in 0..-decpt {
+                buf.push('0');
+            }
+            buf.push_str(&digits);
+        } else if decpt >= ndigits {
+            buf.push_str(&digits);
+            for _ in 0..decpt - ndigits {
+                buf.push('0');
+            }
+            buf.push_str(".0");
+        } else {
+            let d = decpt as usize;
+            buf.push_str(&digits[..d]);
+            buf.push('.');
+            buf.push_str(&digits[d..]);
+        }
     }
 }
 
@@ -231,6 +276,29 @@ mod tests {
         dm.write_tsv(&mut buf).unwrap();
         let s = String::from_utf8(buf).unwrap();
         assert!(s.contains("S1\t0.0\t31.0\t12.0\n"));
+    }
+
+    fn pyrepr(x: f64) -> String {
+        let mut s = String::new();
+        push_pyrepr(&mut s, x);
+        s
+    }
+
+    #[test]
+    fn pyrepr_matches_cpython_float_repr() {
+        assert_eq!(pyrepr(0.0), "0.0");
+        assert_eq!(pyrepr(31.0), "31.0");
+        assert_eq!(pyrepr(123.45), "123.45");
+        assert_eq!(pyrepr(0.7560975609756098), "0.7560975609756098");
+        assert_eq!(pyrepr(0.0001), "0.0001");
+        assert_eq!(pyrepr(1e-5), "1e-05");
+        assert_eq!(pyrepr(1.0 / 2000001.0), "4.99999750000125e-07");
+        assert_eq!(pyrepr(1e15), "1000000000000000.0");
+        assert_eq!(pyrepr(1e16), "1e+16");
+        assert_eq!(pyrepr(1.5e16), "1.5e+16");
+        assert_eq!(pyrepr(2e16), "2e+16");
+        assert_eq!(pyrepr(1.8014398509481984e16), "1.8014398509481984e+16");
+        assert_eq!(pyrepr(f64::NAN), "nan");
     }
 
     #[test]
