@@ -112,17 +112,25 @@ impl DistanceMatrix {
     #[must_use]
     pub fn compute(table: &CountTable, metric: Metric) -> DistanceMatrix {
         let n = table.samples.len();
-        let pairs: Vec<(usize, usize)> = (0..n)
-            .flat_map(|i| (i + 1..n).map(move |j| (i, j)))
-            .collect();
         let mut data = vec![0.0_f64; n * n];
-        let upper: Vec<f64> = pairs
-            .par_iter()
-            .map(|&(i, j)| metric.distance(&table.samples[i], &table.samples[j]))
-            .collect();
-        for (&(i, j), &d) in pairs.iter().zip(&upper) {
-            data[i * n + j] = d;
-            data[j * n + i] = d;
+        // skbio's driver short-circuits a zero-dimension count matrix
+        // (`if 0 in counts.shape: return DistanceMatrix(zeros)`): with no
+        // features every pairwise distance is defined to be 0, avoiding
+        // Bray-Curtis's 0/0 = nan on empty vectors. Feature-present all-zero
+        // samples are a different case and still go through the metric.
+        let n_features = table.samples.first().map_or(0, Vec::len);
+        if n_features > 0 {
+            let pairs: Vec<(usize, usize)> = (0..n)
+                .flat_map(|i| (i + 1..n).map(move |j| (i, j)))
+                .collect();
+            let upper: Vec<f64> = pairs
+                .par_iter()
+                .map(|&(i, j)| metric.distance(&table.samples[i], &table.samples[j]))
+                .collect();
+            for (&(i, j), &d) in pairs.iter().zip(&upper) {
+                data[i * n + j] = d;
+                data[j * n + i] = d;
+            }
         }
         DistanceMatrix {
             ids: table.sample_names.clone(),
@@ -299,6 +307,26 @@ mod tests {
         assert_eq!(pyrepr(2e16), "2e+16");
         assert_eq!(pyrepr(1.8014398509481984e16), "1.8014398509481984e+16");
         assert_eq!(pyrepr(f64::NAN), "nan");
+    }
+
+    #[test]
+    fn empty_feature_table_yields_zero_matrix() {
+        let t = CountTable::parse("feature\tA\tB\tC\n".as_bytes(), '\t').unwrap();
+        for metric in Metric::ALL {
+            let dm = DistanceMatrix::compute(&t, metric);
+            let mut buf = Vec::new();
+            dm.write_tsv(&mut buf).unwrap();
+            let s = String::from_utf8(buf).unwrap();
+            assert_eq!(
+                s,
+                "\tA\tB\tC\n\
+                 A\t0.0\t0.0\t0.0\n\
+                 B\t0.0\t0.0\t0.0\n\
+                 C\t0.0\t0.0\t0.0\n",
+                "metric {} leaked a non-zero/nan cell on a zero-feature table",
+                metric.name()
+            );
+        }
     }
 
     #[test]

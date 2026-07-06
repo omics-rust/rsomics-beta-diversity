@@ -88,6 +88,13 @@ fn matches_skbio_edge_table() {
     differential("edge.tsv");
 }
 
+/// Header-only table (zero features → empty sample vectors). skbio's driver
+/// returns an all-zero DistanceMatrix; Bray-Curtis must not leak 0/0 = nan.
+#[test]
+fn matches_skbio_empty_feature_table() {
+    differential("empty.tsv");
+}
+
 /// Frozen-oracle goldens for float layouts skbio renders in scientific notation
 /// (tiny distances < 1e-4, huge distances >= 1e16). The expected bytes were
 /// generated from scikit-bio's own `DistanceMatrix.write`, so this runs offline
@@ -114,4 +121,9 @@ fn huge_cityblock_scientific_notation() {
 #[test]
 fn huge_euclidean_scientific_notation() {
     matches_frozen_golden("huge.tsv", "euclidean", "huge.euclidean.expected");
+}
+
+#[test]
+fn empty_feature_table_is_all_zero() {
+    matches_frozen_golden("empty.tsv", "braycurtis", "empty.braycurtis.expected");
 }

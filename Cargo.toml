@@ -1,6 +1,6 @@
 [package]
 name = "rsomics-beta-diversity"
-version = "0.1.1"
+version = "0.1.2"
 description = "Pairwise between-sample beta-diversity distance matrix (Bray-Curtis, Jaccard, Euclidean, Canberra, Manhattan) from a feature count table — scikit-bio diversity.beta_diversity equivalent"
 edition = "2024"
 rust-version = "1.91"
