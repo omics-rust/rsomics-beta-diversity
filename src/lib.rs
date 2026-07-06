@@ -2,9 +2,19 @@ use std::io::{BufRead, Write};
 
 use rayon::prelude::*;
 use rsomics_common::{Result, RsomicsError};
+use serde::Serialize;
 
 mod metric;
 pub use metric::Metric;
+
+/// The distance matrix as structured JSON: metric name, sample IDs, and the
+/// symmetric distance rows aligned to `ids`.
+#[derive(Serialize)]
+pub struct Report {
+    pub metric: &'static str,
+    pub ids: Vec<String>,
+    pub distances: Vec<Vec<f64>>,
+}
 
 /// A feature-by-sample count table transposed to per-sample count vectors.
 ///
@@ -144,6 +154,21 @@ impl DistanceMatrix {
     ///
     /// # Errors
     /// Propagates write errors.
+    /// The matrix as a serializable [`Report`] carrying the metric name, sample
+    /// IDs, and one distance row per sample.
+    #[must_use]
+    pub fn report(&self, metric: Metric) -> Report {
+        let n = self.ids.len();
+        let distances = (0..n)
+            .map(|i| self.data[i * n..(i + 1) * n].to_vec())
+            .collect();
+        Report {
+            metric: metric.name(),
+            ids: self.ids.clone(),
+            distances,
+        }
+    }
+
     pub fn write_tsv<W: Write>(&self, mut out: W) -> Result<()> {
         let n = self.ids.len();
         for id in &self.ids {

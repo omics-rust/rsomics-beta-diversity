@@ -6,7 +6,7 @@ use clap::Parser;
 use rsomics_common::{CommonFlags, Result, RsomicsError, Tool, ToolMeta};
 use rsomics_help::{Example, FlagSpec, HelpSpec, Origin, Section};
 
-use rsomics_beta_diversity::{Config, Metric, run};
+use rsomics_beta_diversity::{CountTable, DistanceMatrix, Metric, Report};
 
 pub const META: ToolMeta = ToolMeta {
     name: env!("CARGO_PKG_NAME"),
@@ -36,6 +36,37 @@ pub struct Cli {
     pub common: CommonFlags,
 }
 
+impl Cli {
+    fn execute(&self) -> Result<Report> {
+        let metric = Metric::parse(self.metric.trim())?;
+        let delim = if self.csv { ',' } else { '\t' };
+
+        let reader: Box<dyn std::io::BufRead> = if self.input.as_os_str() == "-" {
+            Box::new(BufReader::new(std::io::stdin().lock()))
+        } else {
+            Box::new(BufReader::new(File::open(&self.input).map_err(|e| {
+                RsomicsError::InvalidInput(format!("{}: {e}", self.input.display()))
+            })?))
+        };
+        let table = CountTable::parse(reader, delim)?;
+        let dm = DistanceMatrix::compute(&table, metric);
+
+        if !self.common.json {
+            let mut out: Box<dyn Write> = if self.output == "-" {
+                Box::new(BufWriter::new(std::io::stdout().lock()))
+            } else {
+                Box::new(BufWriter::new(
+                    File::create(&self.output).map_err(RsomicsError::Io)?,
+                ))
+            };
+            dm.write_tsv(&mut out)?;
+            out.flush().map_err(RsomicsError::Io)?;
+        }
+
+        Ok(dm.report(metric))
+    }
+}
+
 impl Tool for Cli {
     fn meta() -> ToolMeta {
         META
@@ -45,28 +76,17 @@ impl Tool for Cli {
     }
 
     fn execute(self) -> Result<()> {
-        self.common.install_rayon_pool()?;
+        Cli::execute(&self)?;
+        Ok(())
+    }
 
-        let metric = Metric::parse(self.metric.trim())?;
-        let delim = if self.csv { ',' } else { '\t' };
-        let cfg = Config { metric, delim };
-
-        let reader: Box<dyn std::io::BufRead> = if self.input.as_os_str() == "-" {
-            Box::new(BufReader::new(std::io::stdin().lock()))
-        } else {
-            Box::new(BufReader::new(File::open(&self.input).map_err(|e| {
-                RsomicsError::InvalidInput(format!("{}: {e}", self.input.display()))
-            })?))
-        };
-        let mut out: Box<dyn Write> = if self.output == "-" {
-            Box::new(BufWriter::new(std::io::stdout().lock()))
-        } else {
-            Box::new(BufWriter::new(
-                File::create(&self.output).map_err(RsomicsError::Io)?,
-            ))
-        };
-        run(reader, &mut out, &cfg)?;
-        out.flush().map_err(RsomicsError::Io)
+    // The default `run` discards the body's value, so `--json` would emit a
+    // `result: null` envelope after the text matrix. Override to carry the
+    // populated Report into the single envelope while leaving the non-json
+    // path (the TSV matrix on stdout/-o) byte-for-byte intact.
+    fn run(self) -> std::process::ExitCode {
+        let common = self.common().clone();
+        rsomics_common::run(&common, Self::meta(), move || Cli::execute(&self))
     }
 }
 
